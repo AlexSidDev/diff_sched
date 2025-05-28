@@ -166,7 +166,7 @@ class StableDiffusionXLPipeline(StableDiffusionXLDefault):
             latents,
         )
 
-        # 6. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
+        # 6. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipelines
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
 
         # 7. Prepare added time ids & embeddings
@@ -362,6 +362,64 @@ class StableDiffusionXLPipeline(StableDiffusionXLDefault):
 
         return StableDiffusionXLPipelineOutput(images=image)
 
+    def get_added_cond_kwargs(self, prompt_embeds, pooled_prompt_embeds, h, w, device):
+        batch_size = prompt_embeds.shape[0]
+        text_enc_dim = prompt_embeds.shape[-1]
+
+        add_time_ids = self._get_add_time_ids(
+            (h, w),
+            (0, 0),
+            (h, w),
+            dtype=prompt_embeds.dtype,
+            text_encoder_projection_dim=text_enc_dim
+        ).to(device)
+
+        added_cond_kwargs = {'text_embeds': pooled_prompt_embeds, 'time_ids': add_time_ids.repeat(batch_size, 1)}
+
+        return added_cond_kwargs
+
     @torch.no_grad()
-    def denoise_step(self):
-        pass
+    def denoise_step(self, latents, timestep, encoder_states,
+                     extra_step_kwargs, added_cond_kwargs, guidance_scale=0.0,
+                     return_original=False):
+
+        encoder_states, pooled_emb = encoder_states
+
+        if guidance_scale > 1:
+            latent_model_input = torch.cat([latents, latents])
+        else:
+            latent_model_input = latents
+
+        batch_size = latent_model_input.shape[0]
+        latent_model_input = self.scheduler.scale_model_input(latent_model_input, timestep)
+        h = w = self.default_sample_size * self.vae_scale_factor
+
+        # predict the noise residual
+        if added_cond_kwargs is None:
+            added_cond_kwargs = self.get_added_cond_kwargs(encoder_states, pooled_emb, h, w, latents.device)
+
+        timestep_cond = None
+        if self.unet.config.time_cond_proj_dim is not None:
+            guidance_scale_tensor = torch.tensor(self.guidance_scale - 1).repeat(batch_size)
+            timestep_cond = self.get_guidance_scale_embedding(
+                guidance_scale_tensor, embedding_dim=self.unet.config.time_cond_proj_dim
+            ).to(device=latents.device, dtype=latents.dtype)
+
+        noise_pred = self.unet(
+            latent_model_input,
+            timestep,
+            encoder_hidden_states=encoder_states,
+            timestep_cond=timestep_cond,
+            added_cond_kwargs=added_cond_kwargs,
+            return_dict=False,
+        )[0]
+
+        # perform guidance
+        if guidance_scale > 1:
+            noise_pred_text, noise_pred_uncond = noise_pred.chunk(2)
+            noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
+
+        output = self.scheduler.step(noise_pred, timestep, latents, **extra_step_kwargs, return_dict=True)
+
+        return output.prev_sample if not return_original else output.prev_original_sample
+

@@ -65,11 +65,11 @@ class StepsOptimizer:
 
             if self.use_trajs:
                 x_cur = self.get_student_traj(samples[i], step_ind - 1)
-                x_cur = self.denoiser(x_cur, schedule[step_ind - 1], step_ind, prompt)
+                x_cur = self.denoiser(x_cur, schedule[step_ind - 1], prompt)
             else:
                 x_cur = x_end + torch.randn_like(x_end) * self.sigma(reversed_step_ind)
 
-            denoised = self.denoiser(x_cur, schedule[reversed_step_ind], reversed_step_ind, prompt,
+            denoised = self.denoiser(x_cur, schedule[reversed_step_ind], prompt,
                                       return_orig=self.metric == 'cosine')
 
             metric = self.metric(x_end, x_cur if self.metric == 'cosine' else x_start, denoised)

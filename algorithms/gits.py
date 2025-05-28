@@ -2,7 +2,7 @@ import csv
 import copy
 import os.path
 import torch
-from torch_utils import distributed as dist
+import torch.distributed as dist
 import numpy as np
 import pandas as pd
 
@@ -71,7 +71,7 @@ def get_dp_list(denoiser, prompts: list, guidance_scale: float, device, **solver
             dev_tea = cal_deviation(teacher_traj, bs=batch_gpu).mean(dim=0)
             dev_tea = torch.cat([dev_tea, torch.zeros_like(dev_tea[:1])])
 
-            dist.print0(f'Round {r + 1}/{num_accumulation_rounds} | Calculating the cost matrix...')
+            print0(f'Round {r + 1}/{num_accumulation_rounds} | Calculating the cost matrix...')
             for i, sigma_cur in enumerate(sigmas[:-1]):
                 x_cur = teacher_traj[i]
                 d_cur = eps_traj[i]
@@ -99,7 +99,7 @@ def get_dp_list(denoiser, prompts: list, guidance_scale: float, device, **solver
     except:
         pass
 
-    cost_mat /= dist.get_world_size() * num_accumulation_rounds
+    cost_mat /= world_size * num_accumulation_rounds
     cost_mat = cost_mat.detach().cpu().numpy()
 
     # Description string.
